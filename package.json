@@ -1,0 +1,14 @@
+{
+  "name": "tiktok-live-monitor",
+  "version": "1.0.0",
+  "description": "A TikTok live monitoring system using Node.js and TikTok-Live-Connector.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "tiktok-live-connector": "^1.2.3"
+  }
+}
