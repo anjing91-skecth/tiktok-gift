@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "express": "^4.21.2",
+    "moment-timezone": "^0.5.48",
     "socket.io": "^4.8.1",
-    "tiktok-live-connector": "^1.2.3"
+    "tiktok-live-connector": "^2.0.3",
+    "uuid": "^11.1.0"
   }
 }

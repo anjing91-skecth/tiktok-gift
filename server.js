@@ -4,6 +4,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const http = require('http');
 const { Server } = require('socket.io');
+const moment = require('moment-timezone'); // Add moment-timezone for time formatting
+const { v4: uuidv4 } = require('uuid'); // Add this at the top to import UUID library
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -46,6 +48,30 @@ async function loadUsernames() {
     }
 }
 
+// Add logic to determine if a session is new or old based on roomId
+function isNewSession(username, roomId) {
+    const session = sessionData.get(username);
+    if (!session) {
+        return true; // No existing session, so it's new
+    }
+
+    // Check if the roomId matches (if available)
+    if (roomId && session.roomId && roomId !== session.roomId) {
+        return true; // Different roomId indicates a new session
+    }
+
+    return false; // Same roomId, so it's the same session
+}
+
+// Update the formatTimestamp function to handle invalid timestamps gracefully
+function formatTimestamp(timestamp) {
+    if (!timestamp || isNaN(new Date(timestamp).getTime())) {
+        console.error(`Invalid timestamp provided: ${timestamp}`);
+        return 'Invalid date';
+    }
+    return moment(timestamp).tz('Asia/Bangkok').format('DD/MM/YYYY HH:mm');
+}
+
 // Enhanced error logging in monitorAccount
 async function monitorAccount(username) {
     try {
@@ -70,20 +96,25 @@ async function monitorAccount(username) {
             giftValue: 0
         });
 
-        // Initialize session data
-        sessionData.set(username, {
-            username,
-            connectionTime: new Date().toISOString(),
-            maxViewerCount: 0,
-            totalDiamonds: 0,
-            topGifter: null
-        });
-
         // Connect to TikTok
         await tiktokConnection.connect().catch(error => {
             console.error(`Failed to connect to @${username}:`, error);
             throw new Error(`Connection failed for @${username}`);
         });
+
+        // Update the connection logic to fetch roomId using the updated library
+        const roomId = await tiktokConnection.fetchRoomId(); // Fetch the roomId explicitly
+        if (isNewSession(username, roomId)) {
+            sessionData.set(username, {
+                username,
+                connectionTime: new Date().toISOString(), // Save connection time in ISO format
+                maxViewerCount: 0,
+                totalDiamonds: 0,
+                topGifters: [],
+                giftLogs: [],
+                roomId // Save the fetched roomId
+            });
+        }
 
         // Update status on successful connection
         updateAccountStatus(username, {
@@ -138,7 +169,7 @@ async function monitorAccount(username) {
                 currentData.topGifters.push({ username: data.uniqueId, diamonds: data.diamondCount });
             }
             currentData.topGifters.sort((a, b) => b.diamonds - a.diamonds);
-            currentData.topGifters = currentData.topGifters.slice(0, 10);
+            currentData.topGifters = currentData.topGifters.slice(0, 10); // Keep only the top 10 gifters
 
             // Emit updated top gifters
             emitTopGifters(username);
@@ -146,12 +177,21 @@ async function monitorAccount(username) {
             // Emit updated data to frontend
             emitGiftData(username, data);
 
+            // Update session data giftLogs
             const session = sessionData.get(username);
             if (session) {
                 session.totalDiamonds += data.diamondCount;
-                if (!session.topGifter || data.diamondCount > session.topGifter.diamonds) {
-                    session.topGifter = { username: data.uniqueId, diamonds: data.diamondCount };
+                if (!session.giftLogs) {
+                    session.giftLogs = [];
                 }
+                session.giftLogs.push({
+                    username: data.uniqueId,
+                    points: data.diamondCount
+                });
+                if (session.giftLogs.length > 10) {
+                    session.giftLogs.shift(); // Keep only the last 10 entries
+                }
+                saveSessionToJson();
             }
         });
 
@@ -163,6 +203,10 @@ async function monitorAccount(username) {
                 liveStatus: 'NOT LIVE',
                 connectionStatus: 'DISCONNECTED'
             });
+        });
+
+        tiktokConnection.on('rawData', (data) => {
+            console.log('Raw data received:', data);
         });
 
         // Store the connection
@@ -185,20 +229,76 @@ async function monitorAccount(username) {
     }
 }
 
-// Update account status
+// Ensure roomId is updated in session data
 function updateAccountStatus(username, updates) {
     const currentData = monitoringData.get(username) || {};
+    const session = sessionData.get(username) || {
+        username,
+        connectionTime: formatTimestamp(new Date()),
+        maxViewerCount: 0,
+        totalDiamonds: 0,
+        topGifters: [],
+        giftLogs: [],
+        roomId: updates.roomId || null // Include roomId
+    };
+
+    // Update viewer counts
+    session.maxViewerCount = Math.max(session.maxViewerCount, updates.viewerCount || 0);
+
+    // Update gift logs
+    if (updates.gift) {
+        const log = {
+            username: updates.gift.uniqueId,
+            diamondCount: updates.gift.diamondCount,
+            timestamp: formatTimestamp(new Date())
+        };
+        session.giftLogs.push(log);
+        if (session.giftLogs.length > 10) {
+            session.giftLogs.shift(); // Keep only the last 10 entries
+        }
+    }
+
+    // Update top gifters
+    if (updates.gift) {
+        const log = {
+            username: updates.gift.uniqueId,
+            diamondCount: updates.gift.diamondCount,
+            timestamp: formatTimestamp(new Date())
+        };
+        session.giftLogs.push(log);
+        if (session.giftLogs.length > 10) {
+            session.giftLogs.shift(); // Keep only the last 10 entries
+        }
+
+        // Update top gifters
+        const gifter = session.topGifters.find(g => g.username === updates.gift.uniqueId);
+        if (gifter) {
+            gifter.diamonds += updates.gift.diamondCount;
+        } else {
+            session.topGifters.push({ username: updates.gift.uniqueId, diamonds: updates.gift.diamondCount });
+        }
+        session.topGifters.sort((a, b) => b.diamonds - a.diamonds);
+        session.topGifters = session.topGifters.slice(0, 10); // Keep only top 10 gifters
+    }
+
+    // Update roomId if provided
+    if (updates.roomId) {
+        session.roomId = updates.roomId;
+    }
+
+    sessionData.set(username, session);
+
     monitoringData.set(username, {
         ...currentData,
         ...updates,
-        lastChecked: new Date().toISOString()
+        lastChecked: formatTimestamp(new Date())
     });
 
+    // Save session data to JSON in real-time
+    saveSessionToJson();
+
     if (updates.liveStatus === 'NOT LIVE') {
-        const session = sessionData.get(username);
-        if (session) {
-            session.disconnectionTime = new Date().toISOString();
-        }
+        session.disconnectionTime = formatTimestamp(new Date());
         saveSessionToJson();
         saveSessionToCsv();
     }
@@ -220,14 +320,29 @@ function emitGiftData(username, gift) {
         logs.shift(); // Keep only the last 50 entries
     }
     giftLogs.set(username, logs);
+
+    // Emit updated gift logs to the frontend
+    io.emit('updateGiftLogs', { username, giftLogs: logs });
+
+    // Save updated session data to JSON
+    saveSessionToJson();
 }
 
-// Emit updated top gifters to frontend
+// Emit updated top gifters to frontend and save to session_data.json
 function emitTopGifters(username) {
     const currentData = monitoringData.get(username);
     if (currentData) {
         const topGifters = currentData.topGifters || [];
+
+        // Emit to frontend
         io.emit('updateTopGifters', { username, topGifters });
+
+        // Update session data
+        const session = sessionData.get(username);
+        if (session) {
+            session.topGifters = topGifters;
+            saveSessionToJson();
+        }
     }
 }
 
@@ -248,18 +363,31 @@ async function stopMonitoring(username) {
     }
 }
 
-// Fix saveSessionToJson to use fs.writeFile
+// Ensure saveSessionToJson uses the corrected formatTimestamp function
 async function saveSessionToJson() {
     try {
-        const data = Array.from(sessionData.values());
-        await fs.writeFile(sessionJsonPath, JSON.stringify(data, null, 2));
-        console.log(`Session data successfully saved to ${sessionJsonPath}`);
+        // Include all session data, regardless of live status
+        const allSessions = Array.from(sessionData.values()).map(session => {
+            return {
+                username: session.username || null,
+                connectionTime: formatTimestamp(session.connectionTime),
+                maxViewerCount: session.maxViewerCount || 0,
+                totalDiamonds: session.totalDiamonds || 0,
+                topGifters: session.topGifters || [],
+                giftLogs: session.giftLogs || [],
+                disconnectionTime: formatTimestamp(session.disconnectionTime),
+                roomId: session.roomId || null // Include roomId in the saved data
+            };
+        });
+
+        await fs.writeFile(sessionJsonPath, JSON.stringify(allSessions, null, 2));
+        console.log(`Session data successfully saved to ${sessionJsonPath} at ${new Date().toISOString()}`);
     } catch (error) {
         console.error(`Error saving session data to JSON at ${sessionJsonPath}:`, error);
     }
 }
 
-// Fix saveSessionToCsv to use fs.writeFile
+// Save session data to CSV
 async function saveSessionToCsv() {
     try {
         const csv1 = ['Connection Time,Account Name,Max Viewers,Total Diamonds,Disconnection Time'];
@@ -354,6 +482,17 @@ app.get('/api/session/:username', (req, res) => {
     res.json(sessionData.get(username) || {});
 });
 
+// Add API endpoint to read session_data.json
+app.get('/api/sessions', async (req, res) => {
+    try {
+        const data = await fs.readFile(sessionJsonPath, 'utf8');
+        res.json(JSON.parse(data));
+    } catch (error) {
+        console.error('Error reading session_data.json:', error);
+        res.status(500).json({ error: 'Failed to read session data' });
+    }
+});
+
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -362,3 +501,17 @@ app.get('/', (req, res) => {
 server.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });
+
+const logStream = require('fs').createWriteStream(path.join(__dirname, 'server.log'), { flags: 'a' });
+
+// Override console.log and console.error to write to log file
+const originalLog = console.log;
+const originalError = console.error;
+console.log = (...args) => {
+    originalLog(...args);
+    logStream.write(`[LOG] ${new Date().toISOString()} - ${args.join(' ')}\n`);
+};
+console.error = (...args) => {
+    originalError(...args);
+    logStream.write(`[ERROR] ${new Date().toISOString()} - ${args.join(' ')}\n`);
+};

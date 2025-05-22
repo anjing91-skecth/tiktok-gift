@@ -73,6 +73,24 @@
             border-bottom: 1px solid #eee;
             padding: 5px 0;
         }
+        /* Add styles for leaderboard */
+        .leaderboard {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: collapse;
+        }
+        .leaderboard th, .leaderboard td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .leaderboard th {
+            background-color: #f4f4f4;
+            font-weight: bold;
+        }
+        .leaderboard tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
     </style>
 </head>
 <body>
@@ -115,11 +133,39 @@
                     <div><strong>Top Gifter:</strong> ${session.topGifter ? `${session.topGifter.username} (${session.topGifter.diamonds} diamonds)` : 'N/A'}</div>
                 `;
             }
+
+            const giftLogContainer = document.getElementById(`gift-log-${username}`);
+            if (giftLogContainer) {
+                giftLogContainer.innerHTML = '';
+                (session.giftLogs || []).forEach(log => {
+                    const logItem = document.createElement('div');
+                    logItem.className = 'gift-item';
+                    logItem.textContent = `${log.timestamp} - ${log.username}: ${log.diamondCount} diamonds`;
+                    giftLogContainer.appendChild(logItem);
+                });
+            }
+        }
+
+        async function fetchTopGifters(username) {
+            const response = await fetch(`/api/session/${username}`);
+            const session = await response.json();
+
+            const leaderboardContainer = document.getElementById(`top-gifters-${username}`);
+            if (leaderboardContainer) {
+                leaderboardContainer.innerHTML = '<table class="leaderboard"><thead><tr><th>Rank</th><th>Username</th><th>Diamonds</th></tr></thead><tbody></tbody></table>';
+                const tbody = leaderboardContainer.querySelector('tbody');
+
+                session.topGifters.forEach((gifter, index) => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `<td>${index + 1}</td><td>${gifter.username}</td><td>${gifter.diamonds}</td>`;
+                    tbody.appendChild(row);
+                });
+            }
         }
 
         async function fetchStatus() {
             const response = await fetch('/api/status');
-            const { accounts } = await response.json(); // Extract accounts array
+            const { accounts } = await response.json();
 
             const container = document.getElementById('status-container');
             container.innerHTML = '';
@@ -140,13 +186,24 @@
                 sessionContainer.id = `session-${account.username}`;
                 sessionContainer.className = 'session-data';
 
+                const giftLogContainer = document.createElement('div');
+                giftLogContainer.id = `gift-log-${account.username}`;
+                giftLogContainer.className = 'gift-log';
+
+                const leaderboardContainer = document.createElement('div');
+                leaderboardContainer.id = `top-gifters-${account.username}`;
+                leaderboardContainer.className = 'top-gifters';
+
                 card.appendChild(statusIndicator);
                 card.appendChild(username);
                 card.appendChild(sessionContainer);
+                card.appendChild(giftLogContainer);
+                card.appendChild(leaderboardContainer);
 
                 container.appendChild(card);
 
                 fetchSessionData(account.username);
+                fetchTopGifters(account.username);
             });
         }
 
