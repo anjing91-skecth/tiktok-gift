@@ -7,10 +7,18 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
+    "csv-writer": "^1.6.0",
     "express": "^4.21.2",
-    "moment-timezone": "^0.5.48",
     "socket.io": "^4.8.1",
-    "tiktok-live-connector": "^2.0.3",
-    "uuid": "^11.1.0"
+    "tiktok-live-connector": "^1.2.3"
+  },
+  "devDependencies": {
+    "@heroicons/react": "^2.2.0",
+    "autoprefixer": "^10.4.21",
+    "dayjs": "^1.11.13",
+    "postcss": "^8.5.3",
+    "socket.io-client": "^4.8.1",
+    "tailwindcss": "^4.1.7"
   }
 }

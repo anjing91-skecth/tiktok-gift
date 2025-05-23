@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "test-tiktok-monitor",
+			"type": "shell",
+			"command": "npm start",
+			"isBackground": false,
+			"problemMatcher": [],
+			"args": []
+		}
+	]
+}
