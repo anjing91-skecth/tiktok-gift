@@ -28,6 +28,19 @@
             </button>
         </div>
 
+        <!-- Status Summary -->
+        <div class="bg-white rounded-lg shadow-md p-4 mb-4">
+            <h2 class="text-lg font-semibold mb-2">Status Summary</h2>
+            <div class="flex space-x-4">
+                <div>
+                    <span class="text-green-500">●</span> Ready: <span id="readyCount">0</span>
+                </div>
+                <div>
+                    <span class="text-yellow-500">●</span> Not Ready: <span id="notReadyCount">0</span>
+                </div>
+            </div>
+        </div>
+
         <!-- Account Status Section -->
         <div class="grid grid-cols-1 gap-4 mb-4">
             <div class="bg-white rounded-lg shadow-md p-4">
@@ -46,9 +59,12 @@
 
         <!-- Loading indicator -->
         <div id="loadingIndicator" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-            <div class="bg-white rounded-lg p-6 flex items-center space-x-4">
-                <div class="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
-                <span class="text-lg">Checking account status...</span>
+            <div class="bg-white rounded-lg p-6">
+                <div class="flex items-center space-x-4">
+                    <div class="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+                    <span class="text-lg" id="loadingText">Checking account status...</span>
+                </div>
+                <div class="mt-4 text-sm text-gray-600" id="loadingDetail"></div>
             </div>
         </div>
 
@@ -74,8 +90,10 @@
             <div class="text-sm text-gray-600">
                 <p>Viewers: <span class="viewer-count">0</span></p>
                 <p>Peak: <span class="peak-viewer">0</span></p>
-                <div class="gift-section hidden">
-                    <h4 class="font-medium mt-2 mb-1">Recent Gifts</h4>
+                <div class="last-check text-xs text-gray-400"></div>
+                <div class="error-msg text-xs text-red-500 mt-1 hidden"></div>
+                <div class="gift-section hidden mt-2">
+                    <h4 class="font-medium mb-1">Recent Gifts</h4>
                     <ul class="recent-gifts text-xs space-y-1"></ul>
                     <h4 class="font-medium mt-2 mb-1">Top Spenders</h4>
                     <ul class="top-spenders text-xs space-y-1"></ul>
@@ -102,31 +120,33 @@
         const readyAccountsContainer = document.getElementById('readyAccounts');
         const notReadyAccountsContainer = document.getElementById('notReadyAccounts');
         const loadingIndicator = document.getElementById('loadingIndicator');
+        const loadingDetail = document.getElementById('loadingDetail');
+        const readyCount = document.getElementById('readyCount');
+        const notReadyCount = document.getElementById('notReadyCount');
 
         // Helper Functions
-        function createAccountCard(username, status) {
+        function createAccountCard(username, data) {
             const template = document.getElementById('accountCardTemplate');
             const card = template.content.cloneNode(true);
             
-            const usernameEl = card.querySelector('.username');
-            usernameEl.textContent = username;
-            usernameEl.setAttribute('data-username', username);
-            
-            const statusIndicator = card.querySelector('.status-indicator');
-            statusIndicator.classList.add(
-                status === 'ready' ? 'bg-green-500' :
-                status === 'not-ready' ? 'bg-yellow-500' :
-                'bg-red-500'
-            );
-            
             const accountCard = card.querySelector('.account-card');
-            accountCard.addEventListener('click', () => toggleAccountDetails(accountCard));
+            accountCard.id = `account-${username}`;
             
-            // Show gift section by default for monitored accounts
-            if (monitoring) {
-                accountCard.querySelector('.gift-section').classList.remove('hidden');
+            card.querySelector('.username').textContent = username;
+            const statusIndicator = card.querySelector('.status-indicator');
+            statusIndicator.classList.add(data.status === 'ready' ? 'bg-green-500' : 'bg-yellow-500');
+            
+            if (data.lastChecked) {
+                card.querySelector('.last-check').textContent = `Last checked: ${new Date(data.lastChecked).toLocaleTimeString()}`;
             }
             
+            if (data.error) {
+                const errorMsg = card.querySelector('.error-msg');
+                errorMsg.textContent = data.error;
+                errorMsg.classList.remove('hidden');
+            }
+            
+            accountCard.addEventListener('click', () => toggleAccountDetails(accountCard));
             return accountCard;
         }
 
@@ -139,14 +159,60 @@
             readyAccountsContainer.innerHTML = '';
             notReadyAccountsContainer.innerHTML = '';
             
+            const readyAccounts = [];
+            const notReadyAccounts = [];
+            
             Object.entries(accountsData).forEach(([username, data]) => {
-                const container = data.status === 'ready' ? readyAccountsContainer : notReadyAccountsContainer;
-                container.appendChild(createAccountCard(username, data.status));
+                if (data.status === 'ready') {
+                    readyAccounts.push([username, data]);
+                } else {
+                    notReadyAccounts.push([username, data]);
+                }
+            });
+            
+            readyCount.textContent = readyAccounts.length;
+            notReadyCount.textContent = notReadyAccounts.length;
+            
+            readyAccounts.forEach(([username, data]) => {
+                readyAccountsContainer.appendChild(createAccountCard(username, data));
+            });
+            
+            notReadyAccounts.forEach(([username, data]) => {
+                notReadyAccountsContainer.appendChild(createAccountCard(username, data));
             });
         }
 
-        function showLoading() {
+        function updateAccountSession(username, sessionData) {
+            const card = document.getElementById(`account-${username}`);
+            if (!card) return;
+
+            card.querySelector('.viewer-count').textContent = sessionData.viewerCount || 0;
+            card.querySelector('.peak-viewer').textContent = sessionData.peakViewer || 0;
+
+            const recentGifts = card.querySelector('.recent-gifts');
+            const topSpenders = card.querySelector('.top-spenders');
+
+            if (sessionData.recentGifts) {
+                recentGifts.innerHTML = sessionData.recentGifts
+                    .map(gift => `<li>${gift.sender}: ${gift.giftName} x${gift.count}</li>`)
+                    .join('');
+            }
+
+            if (sessionData.topSpenders) {
+                topSpenders.innerHTML = sessionData.topSpenders
+                    .map(spender => `<li>${spender.username}: ${spender.diamond} 💎</li>`)
+                    .join('');
+            }
+        }
+
+        function showLoading(detail = '') {
             loadingIndicator.classList.remove('hidden');
+            if (detail) {
+                loadingDetail.textContent = detail;
+                loadingDetail.classList.remove('hidden');
+            } else {
+                loadingDetail.classList.add('hidden');
+            }
         }
 
         function hideLoading() {
@@ -159,7 +225,7 @@
             checkStatusBtn.disabled = true;
             startMonitorBtn.disabled = true;
             stopMonitorBtn.disabled = true;
-            showLoading();
+            showLoading('This may take a few seconds...');
         });
 
         startMonitorBtn.addEventListener('click', () => {
@@ -175,6 +241,7 @@
             stopMonitorBtn.disabled = true;
             checkStatusBtn.disabled = false;
             monitoring = false;
+            showLoading('Stopping monitoring and saving data...');
         });
 
         editUsernameBtn.addEventListener('click', async () => {
@@ -191,7 +258,7 @@
                 body: JSON.stringify({ content: usernameList.value })
             });
             usernameModal.classList.add('hidden');
-            location.reload(); // Reload page to reset everything
+            location.reload();
         });
 
         cancelEditBtn.addEventListener('click', () => {
@@ -208,55 +275,35 @@
             updateAccountCards();
             hideLoading();
             
-            if (Object.values(data).some(account => account.status === 'ready')) {
-                startMonitorBtn.disabled = false;
-            }
-            
+            const hasReadyAccounts = Object.values(data).some(account => account.status === 'ready');
+            startMonitorBtn.disabled = !hasReadyAccounts;
             checkStatusBtn.disabled = false;
+            
+            console.log('Account Status Update:', {
+                ready: Object.entries(data).filter(([,d]) => d.status === 'ready').map(([u]) => u),
+                notReady: Object.entries(data).filter(([,d]) => d.status === 'not-ready').map(([u]) => u)
+            });
         });
 
         socket.on('sessionUpdate', (data) => {
             if (!monitoring) return;
-            
-            Object.entries(data).forEach(([username, newData]) => {
-                const usernameEl = document.querySelector(`.username[data-username="${username}"]`);
-                if (!usernameEl) return;
-                const card = usernameEl.closest('.account-card');
-                if (!card) return;
-
-                // Update viewer counts if changed
-                const viewerCountEl = card.querySelector('.viewer-count');
-                const peakViewerEl = card.querySelector('.peak-viewer');
-                
-                if (viewerCountEl.textContent !== String(newData.viewerCount || 0)) {
-                    viewerCountEl.textContent = newData.viewerCount || 0;
-                }
-                if (peakViewerEl.textContent !== String(newData.peakViewer || 0)) {
-                    peakViewerEl.textContent = newData.peakViewer || 0;
-                }
-
-                // Update recent gifts if any exist
-                if (newData.gift_data && newData.gift_data.length > 0) {
-                    const recentGifts = card.querySelector('.recent-gifts');
-                    const newGiftsHtml = newData.gift_data
-                        .map(gift => `<li>${gift.sender}: ${gift.giftName} (${gift.diamonds} 💎) x${gift.count}</li>`)
-                        .join('');
-                    if (recentGifts.innerHTML !== newGiftsHtml) {
-                        recentGifts.innerHTML = newGiftsHtml;
-                    }
-                }
-
-                // Update top spenders if any exist
-                if (newData.top_10 && newData.top_10.length > 0) {
-                    const topSpenders = card.querySelector('.top-spenders');
-                    const newSpendersHtml = newData.top_10
-                        .map(spender => `<li>${spender.username}: ${spender.diamond} 💎</li>`)
-                        .join('');
-                    if (topSpenders.innerHTML !== newSpendersHtml) {
-                        topSpenders.innerHTML = newSpendersHtml;
-                    }
-                }
+            Object.entries(data).forEach(([username, sessionData]) => {
+                updateAccountSession(username, sessionData);
             });
+        });
+
+        socket.on('monitoringStopped', () => {
+            monitoring = false;
+            startMonitorBtn.disabled = false;
+            stopMonitorBtn.disabled = true;
+            checkStatusBtn.disabled = false;
+            hideLoading();
+        });
+
+        // Initialize
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            socket.emit('requestInitialStatus');
         });
     </script>
 </body>
