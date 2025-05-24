@@ -1,3 +1,2 @@
-public/top_spender.csv
-public/data_live.csv
+public/*.csv
 public/session_data.json
