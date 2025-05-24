@@ -1,3 +1,3 @@
-node_modules/\n.env\n*.log\n.DS_Store\n.vscode/
-node_modules
-node_modules
+public/top_spender.csv
+public/data_live.csv
+public/session_data.json
